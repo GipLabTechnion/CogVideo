@@ -59,7 +59,7 @@ from torchvision.transforms import InterpolationMode
 import torchvision.transforms as TT
 import numpy as np
 from diffusers.image_processor import VaeImageProcessor
-
+from my_utils import load_video
 
 if is_wandb_available():
     import wandb
@@ -162,7 +162,7 @@ def get_args():
         help="One or more prompt(s) that is used during validation to verify that the model is learning. Multiple validation prompts should be separated by the '--validation_prompt_seperator' string.",
     )
     parser.add_argument(
-        "--validation_images",
+        "--validation_videos",
         type=str,
         default=None,
         help="One or more image path(s) that is used during validation to verify that the model is learning. Multiple validation paths should be separated by the '--validation_prompt_seperator' string. These should correspond to the order of the validation prompts.",
@@ -1663,18 +1663,30 @@ def main(args):
                 )
 
                 validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
-                validation_images = args.validation_images.split(args.validation_prompt_separator)
+                validation_videos = args.validation_videos.split(args.validation_prompt_separator)
 
-                for validation_image, validation_prompt in zip(validation_images, validation_prompts):
+                for validation_video, validation_prompt in zip(validation_videos, validation_prompts):
+
+                    video = load_video(validation_video,
+                        height=args.height,
+                        width=args.width,
+                        max_num_frames=args.max_num_frames,
+                        skip_frames_start=args.skip_frames_start,
+                        skip_frames_end=args.skip_frames_end,
+                        video_reshape_mode=args.video_reshape_mode,
+                    )
+
                     pipeline_args = {
-                        "image": load_image(validation_image),
+                        "video": video,
                         "prompt": validation_prompt,
                         "guidance_scale": args.guidance_scale,
                         "use_dynamic_cfg": args.use_dynamic_cfg,
                         "height": args.height,
                         "width": args.width,
                     }
-
+                    
+                    raise ValueError("implement new pipeline that uses video and not image")
+                
                     validation_outputs = log_validation(
                         pipe=pipe,
                         args=args,
@@ -1729,17 +1741,29 @@ def main(args):
         validation_outputs = []
         if args.validation_prompt and args.num_validation_videos > 0:
             validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
-            validation_images = args.validation_images.split(args.validation_prompt_separator)
+            validation_videos = args.validation_videos.split(args.validation_prompt_separator)
 
-            for validation_image, validation_prompt in zip(validation_images, validation_prompts):
+            for validation_video, validation_prompt in zip(validation_videos, validation_prompts):
+
+                video = load_video(validation_video,
+                    height=args.height,
+                    width=args.width,
+                    max_num_frames=args.max_num_frames,
+                    skip_frames_start=args.skip_frames_start,
+                    skip_frames_end=args.skip_frames_end,
+                    video_reshape_mode=args.video_reshape_mode,
+                )
+
                 pipeline_args = {
-                    "image": load_image(validation_image),
+                    "video": video,
                     "prompt": validation_prompt,
                     "guidance_scale": args.guidance_scale,
                     "use_dynamic_cfg": args.use_dynamic_cfg,
                     "height": args.height,
                     "width": args.width,
                 }
+
+                raise ValueError("implement new pipeline that uses video and not image")
 
                 video = log_validation(
                     pipe=pipe,
