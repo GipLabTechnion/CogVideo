@@ -124,3 +124,8 @@ bash finetune_multi_rank.sh # Needs to be run on each node
   to differences in the backend and training setup. Our recommendation is to set `lora_alpha` equal to rank or rank //
     2.
 + We recommend using a rank of 64 or higher.
+
+
+
+pip install deepspeed
+pip install peft

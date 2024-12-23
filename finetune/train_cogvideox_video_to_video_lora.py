@@ -1579,12 +1579,15 @@ def main(args):
                 )
 
                 # Predict the noise residual
+
+                
                 model_output = transformer(
                     hidden_states=noisy_model_input,
                     encoder_hidden_states=prompt_embeds,
                     timestep=timesteps,
                     image_rotary_emb=image_rotary_emb,
                     return_dict=False,
+                    ofs=torch.tensor([2.0]).to(noisy_model_input.device),
                 )[0]
                 model_pred = scheduler.get_velocity(model_output, noisy_video_latents, timesteps)
 

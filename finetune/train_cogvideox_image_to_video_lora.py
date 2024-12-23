@@ -1246,11 +1246,11 @@ def main(args):
 
     use_deepspeed_optimizer = (
         accelerator.state.deepspeed_plugin is not None
-        and accelerator.state.deepspeed_plugin.deepspeed_config.get("optimizer", "none").lower() != "none"
+        and accelerator.state.deepspeed_plugin.deepspeed_config.get("optimizer", "none").lower() == "none"
     )
     use_deepspeed_scheduler = (
         accelerator.state.deepspeed_plugin is not None
-        and accelerator.state.deepspeed_plugin.deepspeed_config.get("scheduler", "none").lower() != "none"
+        and accelerator.state.deepspeed_plugin.deepspeed_config.get("scheduler", "none").lower() == "none"
     )
 
     optimizer = get_optimizer(args, params_to_optimize, use_deepspeed=use_deepspeed_optimizer)
@@ -1446,8 +1446,8 @@ def main(args):
     vae_scale_factor_spatial = 2 ** (len(vae.config.block_out_channels) - 1)
 
     # For DeepSpeed training
-    model_config = transformer.module.config if hasattr(transformer, "module") else transformer.config
-
+    model_config = transformer.module.config if hasattr(transformer, "module") else transformer.config    
+    
     for epoch in range(first_epoch, args.num_train_epochs):
         transformer.train()
 
@@ -1687,3 +1687,4 @@ def main(args):
 if __name__ == "__main__":
     args = get_args()
     main(args)
+

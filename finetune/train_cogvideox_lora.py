@@ -110,7 +110,13 @@ def get_args():
         help=("A folder containing the training data."),
     )
     parser.add_argument(
-        "--video_column",
+        "--input_video_column",
+        type=str,
+        default="video",
+        help="The column of the dataset containing videos. Or, the name of the file in `--instance_data_root` folder containing the line-separated path to video data.",
+    )
+    parser.add_argument(
+        "--output_video_column",
         type=str,
         default="video",
         help="The column of the dataset containing videos. Or, the name of the file in `--instance_data_root` folder containing the line-separated path to video data.",
@@ -412,7 +418,8 @@ class VideoDataset(Dataset):
         dataset_name: Optional[str] = None,
         dataset_config_name: Optional[str] = None,
         caption_column: str = "text",
-        video_column: str = "video",
+        input_video_column: str = "input_videos",
+        output_video_column: str = "output_videos",
         height: int = 480,
         width: int = 720,
         fps: int = 8,
@@ -428,7 +435,8 @@ class VideoDataset(Dataset):
         self.dataset_name = dataset_name
         self.dataset_config_name = dataset_config_name
         self.caption_column = caption_column
-        self.video_column = video_column
+        self.input_video_column = input_video_column
+        self.output_video_column = output_video_column
         self.height = height
         self.width = width
         self.fps = fps
@@ -441,12 +449,15 @@ class VideoDataset(Dataset):
         if dataset_name is not None:
             self.instance_prompts, self.instance_video_paths = self._load_dataset_from_hub()
         else:
-            self.instance_prompts, self.instance_video_paths = self._load_dataset_from_local_path()
+            self.instance_prompts, self.input_instance_video_paths, self.output_instance_video_paths = self._load_dataset_from_local_path()
 
-        self.num_instance_videos = len(self.instance_video_paths)
-        if self.num_instance_videos != len(self.instance_prompts):
+        self.input_num_instance_videos = len(self.input_instance_video_paths)
+        self.output_num_instance_videos = len(self.output_instance_video_paths)
+
+
+        if self.num_instance_videos != len(self.input_instance_video_paths) or self.num_instance_videos != len(self.output_instance_video_paths):
             raise ValueError(
-                f"Expected length of instance prompts and videos to be the same but found {len(self.instance_prompts)=} and {len(self.instance_video_paths)=}. Please ensure that the number of caption prompts and videos match in your dataset."
+                f"Expected length of instance prompts and videos to be the same but found {len(self.instance_prompts)=} and {len(self.input_instance_video_paths)=} and {len(self.output_instance_video_paths)=} Please ensure that the number of caption prompts and videos match in your dataset."
             )
 
         self.instance_videos = self._preprocess_data()
@@ -457,7 +468,8 @@ class VideoDataset(Dataset):
     def __getitem__(self, index):
         return {
             "instance_prompt": self.id_token + self.instance_prompts[index],
-            "instance_video": self.instance_videos[index],
+            "input_instance_video": self.input_instance_videos[index],
+            "output_instance_video": self.output_instance_videos[index],
         }
 
     def _load_dataset_from_hub(self):
@@ -506,33 +518,42 @@ class VideoDataset(Dataset):
 
     def _load_dataset_from_local_path(self):
         if not self.instance_data_root.exists():
-            raise ValueError("Instance videos root folder does not exist")
+            raise ValueError("Instance videos root folder does not exist", self.instance_data_root)
 
         prompt_path = self.instance_data_root.joinpath(self.caption_column)
-        video_path = self.instance_data_root.joinpath(self.video_column)
+        input_video_path = self.instance_data_root.joinpath(self.input_video_column)
+        output_video_path = self.instance_data_root.joinpath(self.output_video_column)
 
         if not prompt_path.exists() or not prompt_path.is_file():
             raise ValueError(
                 "Expected `--caption_column` to be path to a file in `--instance_data_root` containing line-separated text prompts."
             )
-        if not video_path.exists() or not video_path.is_file():
+        if not input_video_path.exists() or not input_video_path.is_file():
+            raise ValueError(
+                "Expected `--video_column` to be path to a file in `--instance_data_root` containing line-separated paths to video data in the same directory."
+            )
+        if not output_video_path.exists() or not output_video_path.is_file():
             raise ValueError(
                 "Expected `--video_column` to be path to a file in `--instance_data_root` containing line-separated paths to video data in the same directory."
             )
 
         with open(prompt_path, "r", encoding="utf-8") as file:
             instance_prompts = [line.strip() for line in file.readlines() if len(line.strip()) > 0]
-        with open(video_path, "r", encoding="utf-8") as file:
-            instance_videos = [
+        with open(input_video_path, "r", encoding="utf-8") as file:
+            input_instance_videos = [
+                self.instance_data_root.joinpath(line.strip()) for line in file.readlines() if len(line.strip()) > 0
+            ]
+        with open(output_video_path, "r", encoding="utf-8") as file:
+            output_instance_videos = [
                 self.instance_data_root.joinpath(line.strip()) for line in file.readlines() if len(line.strip()) > 0
             ]
 
-        if any(not path.is_file() for path in instance_videos):
+        if any(not path.is_file() for path in input_instance_videos):
             raise ValueError(
                 "Expected '--video_column' to be a path to a file in `--instance_data_root` containing line-separated paths to video data but found atleast one path that is not a valid file."
             )
 
-        return instance_prompts, instance_videos
+        return instance_prompts, input_instance_videos, output_instance_videos
 
     def _preprocess_data(self):
         try:
@@ -948,10 +969,6 @@ def main(args):
 
     logging_dir = Path(args.output_dir, args.logging_dir)
 
-    expected_midxed_precision = "bf16" if "5b" in args.pretrained_model_name_or_path.lower() else "fp16"
-    if args.mixed_precision != expected_midxed_precision:
-        raise ValueError(f"Mixed precision {args.mixed_precision} does not match the model precision, should be {expected_midxed_precision}")
-
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
     kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(
@@ -961,28 +978,6 @@ def main(args):
         project_config=accelerator_project_config,
         kwargs_handlers=[kwargs],
     )
-
-    if accelerator.state.deepspeed_plugin:
-        # Set deepspeed config according to args
-        config = {
-            'optimizer': {
-                'type': args.optimizer,
-                'params': {
-                    'lr': args.learning_rate,
-                    'betas': [args.adam_beta1, args.adam_beta2]
-                },
-                'torch_adam': True
-            },
-            'bf16': {
-                'enabled': True if args.mixed_precision == "bf16" else False
-            },
-            'fp16': {
-                'enabled': True if args.mixed_precision == "fp16" else False
-            },
-            'gradient_accumulation_steps': args.gradient_accumulation_steps,
-            'train_batch_size': args.train_batch_size
-        }
-        accelerator.state.deepspeed_plugin.deepspeed_config.update(config)
 
     # Disable AMP for MPS.
     if torch.backends.mps.is_available():
@@ -1071,7 +1066,7 @@ def main(args):
             "bf16" in accelerator.state.deepspeed_plugin.deepspeed_config
             and accelerator.state.deepspeed_plugin.deepspeed_config["bf16"]["enabled"]
         ):
-            weight_dtype = torch.bfloat16
+            weight_dtype = torch.float16
     else:
         if accelerator.mixed_precision == "fp16":
             weight_dtype = torch.float16
@@ -1184,11 +1179,11 @@ def main(args):
 
     use_deepspeed_optimizer = (
         accelerator.state.deepspeed_plugin is not None
-        and "optimizer" in accelerator.state.deepspeed_plugin.deepspeed_config
+        and accelerator.state.deepspeed_plugin.deepspeed_config.get("optimizer", "none").lower() == "none"
     )
     use_deepspeed_scheduler = (
         accelerator.state.deepspeed_plugin is not None
-        and "scheduler" in accelerator.state.deepspeed_plugin.deepspeed_config
+        and accelerator.state.deepspeed_plugin.deepspeed_config.get("scheduler", "none").lower() == "none"
     )
 
     optimizer = get_optimizer(args, params_to_optimize, use_deepspeed=use_deepspeed_optimizer)
@@ -1199,7 +1194,8 @@ def main(args):
         dataset_name=args.dataset_name,
         dataset_config_name=args.dataset_config_name,
         caption_column=args.caption_column,
-        video_column=args.video_column,
+        input_video_column=args.input_video_column,
+        output_video_column=args.output_video_column,
         height=args.height,
         width=args.width,
         fps=args.fps,
@@ -1216,17 +1212,23 @@ def main(args):
         latent_dist = vae.encode(video).latent_dist
         return latent_dist
 
-    train_dataset.instance_videos = [encode_video(video) for video in train_dataset.instance_videos]
+    train_dataset.input_instance_videos = [encode_video(video) for video in train_dataset.input_instance_videos]
+    train_dataset.output_instance_videos = [encode_video(video) for video in train_dataset.output_instance_videos]
 
     def collate_fn(examples):
-        videos = [example["instance_video"].sample() * vae.config.scaling_factor for example in examples]
+        input_videos = [example["input_instance_video"].sample() * vae.config.scaling_factor for example in examples]
+        output_videos = [example["output_instance_video"].sample() * vae.config.scaling_factor for example in examples]
         prompts = [example["instance_prompt"] for example in examples]
 
-        videos = torch.cat(videos)
-        videos = videos.to(memory_format=torch.contiguous_format).float()
+        input_videos = torch.cat(input_videos)
+        input_videos = input_videos.to(memory_format=torch.contiguous_format).float()
+
+        output_videos = torch.cat(output_videos)
+        output_videos = output_videos.to(memory_format=torch.contiguous_format).float()
 
         return {
-            "videos": videos,
+            "input_videos": input_videos,
+            "output_videos": output_videos,
             "prompts": prompts,
         }
 
@@ -1375,7 +1377,7 @@ def main(args):
                         num_frames=num_frames,
                         vae_scale_factor_spatial=vae_scale_factor_spatial,
                         patch_size=model_config.patch_size,
-                        patch_size_t=model_config.patch_size_t if model_config.patch_size_t is not None else 1,
+                        patch_size_t=model_config.patch_size_t,
                         attention_head_dim=model_config.attention_head_dim,
                         device=accelerator.device,
                     )
