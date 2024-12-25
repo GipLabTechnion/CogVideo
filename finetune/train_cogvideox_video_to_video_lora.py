@@ -38,7 +38,7 @@ import diffusers
 from diffusers import (
     AutoencoderKLCogVideoX,
     CogVideoXDPMScheduler,
-    CogVideoXImageToVideoPipeline,
+    # CogVideoXImageToVideoPipeline,
     CogVideoXTransformer3DModel,
 )
 from diffusers.models.embeddings import get_3d_rotary_pos_embed
@@ -60,6 +60,7 @@ import torchvision.transforms as TT
 import numpy as np
 from diffusers.image_processor import VaeImageProcessor
 from my_utils import load_video
+from vid2vid_pipeline import CogVideoXVideoToVideoPipeline
 
 if is_wandb_available():
     import wandb
@@ -844,6 +845,8 @@ def log_validation(
 
     pipe.scheduler = CogVideoXDPMScheduler.from_config(pipe.scheduler.config, **scheduler_args)
     pipe = pipe.to(accelerator.device)
+
+    print(f"Device is {accelerator.device}")
     # pipe.set_progress_bar_config(disable=True)
 
     # run inference
@@ -1255,7 +1258,7 @@ def main(args):
                 # make sure to pop weight so that corresponding model is not saved again
                 weights.pop()
 
-            CogVideoXImageToVideoPipeline.save_lora_weights(
+            CogVideoXVideoToVideoPipeline.save_lora_weights(
                 output_dir,
                 transformer_lora_layers=transformer_lora_layers_to_save,
             )
@@ -1271,7 +1274,7 @@ def main(args):
             else:
                 raise ValueError(f"Unexpected save model: {model.__class__}")
 
-        lora_state_dict = CogVideoXImageToVideoPipeline.lora_state_dict(input_dir)
+        lora_state_dict = CogVideoXVideoToVideoPipeline.lora_state_dict(input_dir)
 
         transformer_state_dict = {
             f'{k.replace("transformer.", "")}': v for k, v in lora_state_dict.items() if k.startswith("transformer.")
@@ -1534,9 +1537,10 @@ def main(args):
     # model_config.patch_size_t = 1
 
     for epoch in range(first_epoch, args.num_train_epochs):
-        transformer.train()
 
         for step, batch in enumerate(train_dataloader):
+            if epoch == 0:
+                break
             models_to_accumulate = [transformer]
 
             with accelerator.accumulate(models_to_accumulate):
@@ -1651,15 +1655,15 @@ def main(args):
                 break
 
         if accelerator.is_main_process:
-            if args.validation_prompt is not None and (epoch + 1) % args.validation_epochs == 0:
+            if (args.validation_prompt is not None) and ((epoch + 1) % args.validation_epochs == 0 or epoch == args.num_train_epochs - 1 or epoch == 0):
                 # Create pipeline
-                pipe = CogVideoXImageToVideoPipeline.from_pretrained(
+                pipe = CogVideoXVideoToVideoPipeline.from_pretrained(
                     args.pretrained_model_name_or_path,
                     transformer=unwrap_model(transformer),
                     scheduler=scheduler,
                     revision=args.revision,
                     variant=args.variant,
-                    torch_dtype=weight_dtype,
+                    torch_dtype=weight_dtype
                 )
 
                 validation_prompts = args.validation_prompt.split(args.validation_prompt_separator)
@@ -1683,10 +1687,9 @@ def main(args):
                         "use_dynamic_cfg": args.use_dynamic_cfg,
                         "height": args.height,
                         "width": args.width,
+                        "num_frames": args.max_num_frames
                     }
-                    
-                    raise ValueError("implement new pipeline that uses video and not image")
-                
+                                    
                     validation_outputs = log_validation(
                         pipe=pipe,
                         args=args,
@@ -1709,7 +1712,7 @@ def main(args):
         transformer = transformer.to(dtype)
         transformer_lora_layers = get_peft_model_state_dict(transformer)
 
-        CogVideoXImageToVideoPipeline.save_lora_weights(
+        CogVideoXVideoToVideoPipeline.save_lora_weights(
             save_directory=args.output_dir,
             transformer_lora_layers=transformer_lora_layers,
         )
@@ -1719,12 +1722,13 @@ def main(args):
         free_memory()
 
         # Final test inference
-        pipe = CogVideoXImageToVideoPipeline.from_pretrained(
+        pipe = CogVideoXVideoToVideoPipeline.from_pretrained(
             args.pretrained_model_name_or_path,
             revision=args.revision,
             variant=args.variant,
             torch_dtype=weight_dtype,
         )
+
         pipe.scheduler = CogVideoXDPMScheduler.from_config(pipe.scheduler.config)
 
         if args.enable_slicing:
@@ -1761,9 +1765,8 @@ def main(args):
                     "use_dynamic_cfg": args.use_dynamic_cfg,
                     "height": args.height,
                     "width": args.width,
+                    "num_frames": args.max_num_frames
                 }
-
-                raise ValueError("implement new pipeline that uses video and not image")
 
                 video = log_validation(
                     pipe=pipe,

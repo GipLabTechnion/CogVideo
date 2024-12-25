@@ -12,3 +12,8 @@ imageio-ffmpeg>=0.5.1
 openai>=1.54.0
 moviepy>=1.0.3
 scikit-video>=1.1.11
+deepspeed
+peft
+wandb
+git+https://github.com/huggingface/diffusers.git@refs/pull/9877/head
+decord
