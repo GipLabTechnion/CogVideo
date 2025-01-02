@@ -6,11 +6,10 @@ channels:
 dependencies:
   - python=3.10
   - pip
-  - cudatoolkit-dev=11.7
   - pytorch
   - torchvision
   - torchaudio
-  - pytorch-cuda=11.7
+  - pytorch-cuda=11.8
   - lightning
   - numpy=1.26
   - pip:
